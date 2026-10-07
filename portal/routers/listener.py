@@ -152,6 +152,10 @@ async def listen_event_page(request: Request, event_slug: str, code: str | None 
                     "channel_id": channel_id,
                     "whep_url": f"{settings.mediamtx_whip_base}/{channel_id}/whep",
                     "audio_delay_ms": r.audio_delay_ms,
+                    # Delays floor captions/TTS to match a slower parallel YouTube playback.
+                    "sync_offset_ms": (
+                        r.program_sync_offset_ms if r.floor_source_mode == FLOOR_SOURCE_PROGRAM_INGEST else 0
+                    ),
                     "translation_enabled": r.floor_translation_enabled,
                     "translation_languages": lang_data,
                 }
