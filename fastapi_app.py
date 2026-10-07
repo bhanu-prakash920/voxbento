@@ -67,6 +67,10 @@ async def lifespan(app: FastAPI):
     # portal.webhooks.worker.webhook_worker_loop is respected.
     webhook_task = asyncio.create_task(_webhook_worker_mod.webhook_worker_loop())
 
+    from portal.program_ingest.supervisor import supervisor as program_ingest_supervisor
+
+    program_ingest_task = asyncio.create_task(program_ingest_supervisor.run())
+
     dg.track_task(asyncio.create_task(_gen()))
 
     logging.getLogger("uvicorn.access").addFilter(_UvicornTokenRedactor())
@@ -77,6 +81,10 @@ async def lifespan(app: FastAPI):
     webhook_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await webhook_task
+
+    program_ingest_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await program_ingest_task
 
     if pg.shared_http_client:
         await pg.shared_http_client.aclose()

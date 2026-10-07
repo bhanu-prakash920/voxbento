@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from portal.config import settings
 from portal.program_ingest.publish_auth import MediaMTXAuthRequest, authorize_publish
+from portal.program_ingest.supervisor import supervisor
 
 router = APIRouter(include_in_schema=False)
 
@@ -31,7 +32,7 @@ async def mediamtx_auth_hook(body: MediaMTXAuthRequest, key: str = Query("")) ->
     """
     if not hook_key_valid(key):
         return JSONResponse(_UNAUTHORIZED, status_code=401)
-    decision = await authorize_publish(body)
+    decision = await authorize_publish(body, can_accept_new_feed=supervisor.can_accept_new_feed)
     if not decision.allowed:
         return JSONResponse(_UNAUTHORIZED, status_code=401)
     return JSONResponse({"ok": True})
