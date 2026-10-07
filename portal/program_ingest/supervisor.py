@@ -31,7 +31,7 @@ from portal.booth_identity import make_mediamtx_path
 from portal.config import settings
 from portal.database import get_session
 from portal.models import FLOOR_SOURCE_PROGRAM_INGEST, Event, Room, utc_now
-from portal.program_ingest.mediamtx import PathSnapshot, fetch_path_snapshot
+from portal.program_ingest.mediamtx import OFFLINE, PathSnapshot, fetch_path_snapshots
 from portal.transcription.floor import (
     FLOOR_LANGUAGE,
     floor_transcription_issue,
@@ -129,7 +129,7 @@ async def record_ingest_timestamp(room_id: int, *, connected: bool, when: dateti
 @dataclass
 class ProgramIngestSupervisor:
     config: SupervisorConfig = field(default_factory=SupervisorConfig.from_settings)
-    fetch_snapshot: Callable[[str], Awaitable[PathSnapshot | None]] = fetch_path_snapshot
+    fetch_snapshots: Callable[[], Awaitable[dict[str, PathSnapshot] | None]] = fetch_path_snapshots
     worker_ops: WorkerOps = field(default_factory=WorkerOps)
     clock: Callable[[], float] = time.monotonic
     statuses: dict[int, RoomIngestStatus] = field(default_factory=dict)
@@ -175,14 +175,18 @@ class ProgramIngestSupervisor:
             current_ids = {room.id for room in rooms}
             for stale_id in [rid for rid in self.statuses if rid not in current_ids]:
                 await self.release_room_locked(stale_id)
+            if not rooms:
+                return
+            snapshots = await self.fetch_snapshots()
             for room in rooms:
-                await self.evaluate_room(room)
+                path = make_mediamtx_path(room.event.slug, room.id, FLOOR_LANGUAGE)
+                snapshot = None if snapshots is None else snapshots.get(path, OFFLINE)
+                await self.evaluate_room(room, snapshot)
 
-    async def evaluate_room(self, room: Room) -> None:
+    async def evaluate_room(self, room: Room, snapshot: PathSnapshot | None) -> None:
+        """Advance one room's state from its path snapshot (``None`` = MediaMTX unreachable)."""
         event = room.event
         status = self.statuses.setdefault(room.id, RoomIngestStatus(room_id=room.id))
-        path = make_mediamtx_path(event.slug, room.id, FLOOR_LANGUAGE)
-        snapshot = await self.fetch_snapshot(path)
         now = self.clock()
 
         if snapshot is None:

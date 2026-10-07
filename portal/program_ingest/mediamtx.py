@@ -120,6 +120,44 @@ async def fetch_path_snapshot(path: str) -> PathSnapshot | None:
         return None
 
 
+LIST_PAGE_SIZE = 500
+
+
+async def fetch_path_snapshots() -> dict[str, PathSnapshot] | None:
+    """Return live snapshots of every active MediaMTX path, keyed by path name.
+
+    One paginated list call per poll keeps load flat as rooms grow and avoids a
+    404 (logged as an error by MediaMTX) for every offline room. ``None`` means
+    the Control API is unreachable or returned something unusable.
+    """
+    snapshots: dict[str, PathSnapshot] = {}
+    page = 0
+    while True:
+        url = f"{settings.mediamtx_api_base}/v3/paths/list?itemsPerPage={LIST_PAGE_SIZE}&page={page}"
+        try:
+            response = await get_http_client().get(url, timeout=3.0)
+        except httpx.HTTPError as exc:
+            logger.warning("MediaMTX path list unavailable for program ingest: %s", exc)
+            return None
+        if response.status_code != 200:
+            logger.warning("MediaMTX path list error for program ingest status=%s", response.status_code)
+            return None
+        try:
+            body = response.json()
+        except ValueError:
+            logger.warning("MediaMTX path list returned invalid JSON")
+            return None
+        if not isinstance(body, dict) or not isinstance(body.get("items"), list):
+            return None
+        for item in body["items"]:
+            if isinstance(item, dict) and isinstance(item.get("name"), str):
+                snapshots[item["name"]] = parse_path_snapshot(item)
+        page_count = body.get("pageCount")
+        page += 1
+        if not isinstance(page_count, int) or page >= page_count:
+            return snapshots
+
+
 async def remove_path_config(path: str) -> None:
     """Drop any runtime path config (e.g. alwaysAvailable Opus) so the encoder's own tracks are used."""
     _created_paths.discard(path)

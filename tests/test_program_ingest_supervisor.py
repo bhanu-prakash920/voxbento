@@ -74,10 +74,12 @@ def make_supervisor(snapshots: dict[str, PathSnapshot | None], workers: FakeWork
         poll_seconds=1,
     )
 
-    async def fetch(path: str) -> PathSnapshot | None:
-        return snapshots.get(path, OFFLINE)
+    async def fetch() -> dict[str, PathSnapshot] | None:
+        if any(v is None for v in snapshots.values()):
+            return None
+        return {path: snap for path, snap in snapshots.items() if snap is not None and snap.online}
 
-    return ProgramIngestSupervisor(config=config, fetch_snapshot=fetch, worker_ops=workers.ops(), clock=clock)
+    return ProgramIngestSupervisor(config=config, fetch_snapshots=fetch, worker_ops=workers.ops(), clock=clock)
 
 
 async def make_room(slug: str, *, transcription: bool = True, mode: str = FLOOR_SOURCE_PROGRAM_INGEST) -> Room:
@@ -418,13 +420,13 @@ async def test_real_worker_registry_never_duplicates_floor_worker():
     clock = Clock()
     config = SupervisorConfig(max_active=4, disconnect_grace_seconds=5, stall_seconds=60, poll_seconds=1)
 
-    async def fetch(p: str) -> PathSnapshot | None:
-        return snaps.get(p, OFFLINE)
+    async def fetch() -> dict[str, PathSnapshot] | None:
+        return {p: snap for p, snap in snaps.items() if snap is not None and snap.online}
 
     def fake_start(self):
         self.state = worker_mod.State.RUNNING
 
-    sup = ProgramIngestSupervisor(config=config, fetch_snapshot=fetch, clock=clock)
+    sup = ProgramIngestSupervisor(config=config, fetch_snapshots=fetch, clock=clock)
     booth_id = f"ev-real-{room.id}-floor"
     with (
         patch.object(worker_mod.TranscriptionWorkerSession, "start", fake_start),
@@ -530,3 +532,39 @@ async def test_kick_publisher_noop_when_offline():
     client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(404)))
     with patch.object(mediamtx, "get_http_client", return_value=client):
         assert not await mediamtx.kick_publisher("ev/1/floor")
+
+
+@pytest.mark.anyio
+async def test_fetch_path_snapshots_pages_through_list():
+    import httpx
+
+    from portal.program_ingest import mediamtx
+
+    pages = {
+        "0": {
+            "pageCount": 2,
+            "items": [
+                {
+                    "name": "ev/1/floor",
+                    "online": True,
+                    "source": {"type": "webRTCSession", "id": "a"},
+                    "tracks2": [{"codec": "Opus"}],
+                }
+            ],
+        },
+        "1": {"pageCount": 2, "items": [{"name": "ev/2/floor", "online": False, "source": None}]},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v3/paths/list"
+        return httpx.Response(200, json=pages[request.url.params["page"]])
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with patch.object(mediamtx, "get_http_client", return_value=client):
+        snaps = await mediamtx.fetch_path_snapshots()
+    assert snaps["ev/1/floor"].online and snaps["ev/1/floor"].audio_codecs == ("Opus",)
+    assert not snaps["ev/2/floor"].online
+
+    down = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(500)))
+    with patch.object(mediamtx, "get_http_client", return_value=down):
+        assert await mediamtx.fetch_path_snapshots() is None
