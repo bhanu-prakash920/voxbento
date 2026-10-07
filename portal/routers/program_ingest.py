@@ -8,7 +8,7 @@ The publish secret is returned exactly once, by the credential endpoint.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -72,7 +72,10 @@ def ingest_url(room: Room, event_slug: str) -> str:
 
 
 def iso(value: datetime | None) -> str | None:
-    return value.isoformat() if value else None
+    if value is None:
+        return None
+    # SQLite returns naive datetimes; every stored timestamp is UTC.
+    return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).isoformat()
 
 
 def ingest_warnings(room: Room) -> list[str]:

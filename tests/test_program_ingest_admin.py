@@ -287,3 +287,16 @@ async def test_room_page_hides_bot_controls_in_program_mode(client, media_ops):
     page = await client.get(f"/workspace/events/{ev_id}/rooms/{room_id}/", cookies=cookies)
     assert 'id="start-bot-btn"' not in page.text
     assert "program-ingest.js" in page.text
+
+
+@pytest.mark.anyio
+async def test_timestamps_are_reported_as_utc(client, media_ops):
+    from datetime import datetime
+
+    from portal.database import get_session
+
+    token, ev_id, room_id = await make_owner_and_room()
+    async with get_session() as s:
+        (await s.get(Room, room_id)).program_ingest_last_connected_at = datetime(2026, 10, 8, 9, 30)
+    data = (await client.get(f"{base(ev_id, room_id)}/status", cookies={"user_token": token})).json()
+    assert data["last_connected_at"] == "2026-10-08T09:30:00+00:00"
