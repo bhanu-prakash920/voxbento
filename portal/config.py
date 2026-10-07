@@ -32,6 +32,30 @@ class Settings(BaseSettings):
     mediamtx_api_base: str = "http://localhost:9997"
     mediamtx_rtsp_base: str = "rtsp://mediamtx:8554"
     floor_bot_base: str = "http://floor-bot:8080"
+    # Shared secret MediaMTX appends as ?key= when calling the publish auth
+    # hook (/internal/mediamtx/auth). Empty disables the check (local dev only).
+    mediamtx_auth_hook_secret: str = ""
+
+    # ── Program Stream Ingest ────────────────────────────────────────────────
+    # Public base URL organizers' encoders publish to. Defaults to the WHIP base.
+    program_ingest_public_base: str = ""
+    # Comma-separated MediaMTX protocols accepted for program ingest publishes.
+    # Only add a protocol after enabling its encrypted transport in MediaMTX.
+    program_ingest_protocols: str = "webrtc"
+    program_ingest_max_active: int = 4
+    program_ingest_poll_seconds: float = 2.0
+    program_ingest_disconnect_grace_seconds: float = 15.0
+    program_ingest_stall_seconds: float = 10.0
+    program_ingest_auth_max_failures: int = 10
+    program_ingest_auth_failure_window_seconds: int = 300
+
+    @property
+    def effective_program_ingest_public_base(self) -> str:
+        return (self.program_ingest_public_base or self.mediamtx_whip_base).rstrip("/")
+
+    @property
+    def program_ingest_protocol_set(self) -> frozenset[str]:
+        return frozenset(p.strip().lower() for p in self.program_ingest_protocols.split(",") if p.strip())
 
     @property
     def effective_jitsi_base_url(self) -> str:
