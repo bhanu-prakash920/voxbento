@@ -499,3 +499,34 @@ async def test_remove_path_config_clears_alwaysavailable_cache():
         await mediamtx.remove_path_config("ev/1/floor")
     assert "ev/1/floor" not in _created_paths
     assert seen == [("DELETE", "/v3/config/paths/delete/ev/1/floor")]
+
+
+@pytest.mark.anyio
+async def test_kick_publisher_targets_the_live_session():
+    import httpx
+
+    from portal.program_ingest import mediamtx
+
+    calls: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        if request.method == "GET":
+            return httpx.Response(200, json={"online": True, "source": {"type": "webRTCSession", "id": "sess-9"}})
+        return httpx.Response(200)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    with patch.object(mediamtx, "get_http_client", return_value=client):
+        assert await mediamtx.kick_publisher("ev/1/floor")
+    assert calls[-1] == ("POST", "/v3/webrtc/sessions/kick/sess-9")
+
+
+@pytest.mark.anyio
+async def test_kick_publisher_noop_when_offline():
+    import httpx
+
+    from portal.program_ingest import mediamtx
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(404)))
+    with patch.object(mediamtx, "get_http_client", return_value=client):
+        assert not await mediamtx.kick_publisher("ev/1/floor")

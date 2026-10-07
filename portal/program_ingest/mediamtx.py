@@ -131,3 +131,40 @@ async def remove_path_config(path: str) -> None:
         return
     if response.status_code not in (200, 404):
         logger.warning("MediaMTX path config removal failed path=%s status=%s", path, response.status_code)
+
+
+# MediaMTX source type → Control API kick collection.
+KICK_ENDPOINTS = {
+    "webRTCSession": "webrtc/sessions",
+    "rtmpConn": "rtmp/conns",
+    "rtmpsConn": "rtmps/conns",
+    "srtConn": "srt/conns",
+    "rtspSession": "rtsp/sessions",
+    "rtspsSession": "rtsps/sessions",
+}
+
+
+async def kick_publisher(path: str) -> bool:
+    """Disconnect whoever is publishing ``path`` so a revoked credential stops immediately.
+
+    MediaMTX only authenticates at connect time, so revocation, rotation and
+    source-mode switches must also end the established session.
+    """
+    snapshot = await fetch_path_snapshot(path)
+    if snapshot is None or not snapshot.online or not snapshot.source_id:
+        return False
+    collection = KICK_ENDPOINTS.get(snapshot.source_type or "")
+    if collection is None:
+        logger.warning("No kick endpoint for program ingest source_type=%s path=%s", snapshot.source_type, path)
+        return False
+    url = f"{settings.mediamtx_api_base}/v3/{collection}/kick/{quote(snapshot.source_id, safe='')}"
+    try:
+        response = await get_http_client().post(url, timeout=3.0)
+    except httpx.HTTPError as exc:
+        logger.warning("Could not kick program ingest publisher path=%s: %s", path, exc)
+        return False
+    if response.status_code != 200:
+        logger.warning("MediaMTX kick failed path=%s status=%s", path, response.status_code)
+        return False
+    logger.info("program ingest publisher disconnected path=%s source_type=%s", path, snapshot.source_type)
+    return True

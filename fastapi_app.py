@@ -24,6 +24,7 @@ from portal.routers.internal import router as internal_router
 from portal.routers.interpreter import router as interpreter_router
 from portal.routers.listener import router as listener_router
 from portal.routers.oauth import router as oauth_router
+from portal.routers.program_ingest import router as program_ingest_router
 from portal.routers.public import router as public_router
 from portal.routers.webhooks import router as webhooks_router
 from portal.websockets.handlers import router as ws_router
@@ -185,6 +186,7 @@ app.include_router(api_router)
 app.include_router(api_v1_router)
 
 app.include_router(admin_router)
+app.include_router(program_ingest_router)
 
 app.include_router(demo_router)
 
