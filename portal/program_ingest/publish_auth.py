@@ -14,6 +14,7 @@ gating via the WHIP URL endpoint plus MediaMTX ``overridePublisher``).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections import deque
@@ -171,7 +172,7 @@ async def authorize_publish(
         return _deny(req, room.id, DenyReason.FLOOR_BOT_CONFLICT)
     if req.protocol not in settings.program_ingest_protocol_set:
         return _deny(req, room.id, DenyReason.PROTOCOL_NOT_ALLOWED)
-    if not verify_room_ingest_secret(room, secret):
+    if not await asyncio.to_thread(verify_room_ingest_secret, room, secret):
         return _deny(req, room.id, DenyReason.INVALID_CREDENTIAL)
     if can_accept_new_feed is not None and not can_accept_new_feed(room.id):
         return _deny(req, room.id, DenyReason.CAPACITY, count_failure=False)

@@ -7,6 +7,7 @@ The publish secret is returned exactly once, by the credential endpoint.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -174,7 +175,8 @@ async def program_ingest_rotate_credential(event_id: int, room_id: int, body: Cr
     """Issue (or rotate) the room's publish secret and return it this one time."""
     room = await load_room(event_id, room_id)
     try:
-        issued = issue_ingest_secret(body.expires_in_days)
+        # bcrypt hashing is CPU-bound; keep it off the event loop.
+        issued = await asyncio.to_thread(issue_ingest_secret, body.expires_in_days)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     replaced = bool(room.program_ingest_secret_hash)

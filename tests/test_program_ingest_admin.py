@@ -126,7 +126,7 @@ async def test_unknown_mode_rejected(client, media_ops):
 
 @pytest.mark.anyio
 async def test_secret_is_returned_once_and_never_again(client, media_ops):
-    from portal.program_ingest.credentials import hash_ingest_secret
+    from portal.program_ingest.credentials import verify_room_ingest_secret
 
     token, ev_id, room_id = await make_owner_and_room()
     cookies = {"user_token": token}
@@ -141,7 +141,7 @@ async def test_secret_is_returned_once_and_never_again(client, media_ops):
     assert issued["hint"] == secret[-4:]
 
     room = await stored_room(room_id)
-    assert room.program_ingest_secret_hash == hash_ingest_secret(secret)
+    assert verify_room_ingest_secret(room, secret)
     assert secret not in repr(room.__dict__)
 
     status = await client.get(f"{base(ev_id, room_id)}/status", cookies=cookies)

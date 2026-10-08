@@ -1,20 +1,19 @@
 """Program ingest publish credentials.
 
-A credential is a high-entropy random secret bound to exactly one room. Only
-its SHA-256 digest is stored: the plaintext is returned once when it is issued
-or rotated and can never be recovered afterwards. Because the secret carries
-256 bits of entropy, an unsalted digest is not brute-forceable, and unlike an
-HMAC keyed on ``SECRET_KEY`` it survives application secret rotation.
+A credential is a high-entropy random secret bound to exactly one room. It is
+stored with bcrypt, the project's standard for credentials a client presents
+(``portal.auth.hash_password``): the plaintext is returned once when it is
+issued or rotated and can never be recovered afterwards. Encoders present it
+as a WHIP bearer token or, for RTMP/SRT/RTSP, as the password.
 """
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from portal.auth import hash_password, verify_password
 from portal.models import FLOOR_SOURCE_PROGRAM_INGEST, Room, utc_now
 
 SECRET_PREFIX = "vbi_"
@@ -33,7 +32,7 @@ class IssuedSecret:
 
 
 def hash_ingest_secret(secret: str) -> str:
-    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+    return hash_password(secret)
 
 
 def issue_ingest_secret(expires_in_days: int | None = None, now: datetime | None = None) -> IssuedSecret:
@@ -78,7 +77,7 @@ def verify_room_ingest_secret(room: Room, presented: str, now: datetime | None =
     """Return whether ``presented`` may publish the program feed for ``room``.
 
     The room must be in program-ingest mode and hold an unexpired credential.
-    The digest comparison is constant-time.
+    bcrypt verification is deliberately slow; call this off the event loop.
     """
     if room.floor_source_mode != FLOOR_SOURCE_PROGRAM_INGEST:
         return False
@@ -87,4 +86,8 @@ def verify_room_ingest_secret(room: Room, presented: str, now: datetime | None =
         return False
     if is_secret_expired(room, now):
         return False
-    return hmac.compare_digest(stored, hash_ingest_secret(presented))
+    try:
+        return verify_password(presented, stored)
+    except ValueError:
+        # Not a bcrypt hash (corrupt row): treat as no valid credential.
+        return False

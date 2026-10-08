@@ -72,7 +72,7 @@ Cascade: deletes rooms + booths when event is deleted.
 | `floor_tts_voice` | String(50) | Default `'M1'`; Supertonic preset voice (M1–M5, F1–F5) |
 | `audio_delay_ms` | Integer | Default 0; optional listener-side WHEP playback delay for all sources in the room |
 | `floor_source_mode` | String(20) | Default `'jitsi_bot'`; `'program_ingest'` hands the floor path to an organizer encoder. Exactly one source may publish `{slug}/{room_id}/floor` |
-| `program_ingest_secret_hash` | String(64) nullable | SHA-256 hex of the publish secret (`portal/program_ingest/credentials.py`); plaintext shown once |
+| `program_ingest_secret_hash` | String(64) nullable | bcrypt hash of the publish secret (`portal/program_ingest/credentials.py`); plaintext shown once |
 | `program_ingest_secret_hint` | String(8) nullable | Last 4 characters of the secret for display |
 | `program_ingest_secret_created_at` / `_expires_at` | DateTime(tz) nullable | Expiry optional (1/7/30/90 days) |
 | `program_ingest_last_connected_at` / `_last_disconnected_at` | DateTime(tz) nullable | Written by the ingest supervisor on transitions; stale "connected" closed on startup |

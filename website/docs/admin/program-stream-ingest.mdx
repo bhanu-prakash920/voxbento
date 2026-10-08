@@ -106,7 +106,7 @@ The card also shows last connected and disconnected times, detected audio and vi
 
 - **Rotate**: issues a new secret, invalidates the old one immediately, and disconnects the current encoder session. Paste the new secret into the encoder.
 - **Revoke**: deletes the secret and disconnects the encoder. Nothing can publish until you generate a new secret.
-- Only a SHA-256 digest of the secret is stored. It never appears in logs, status responses, or rendered pages after creation.
+- Only a bcrypt hash of the secret is stored. It never appears in logs, status responses, or rendered pages after creation.
 - Failed publish attempts are rate-limited per client IP (`PROGRAM_INGEST_AUTH_MAX_FAILURES` per `PROGRAM_INGEST_AUTH_FAILURE_WINDOW_SECONDS`). All refusals are the same `401`, whether the room exists or not.
 
 Rotating or revoking the Voxbento secret never touches your YouTube key.

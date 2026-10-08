@@ -106,7 +106,7 @@ VoxBento is a production-grade **browser-first interpretation booth console** fo
 11. **No open redirects.** All redirects use `safe_redirect()` which validates path starts with `/` and has no netloc.
 12. **Management namespaces reflect privilege.** Event owners use `/workspace/*`; room coordinators use the room-scoped `/mission-control/*` surface. `/admin/*` is reserved for super-admin use, apart from legacy room-scoped coordinator handlers retained for compatibility. Legacy event-owner URLs redirect without changing OAuth routes or token behavior.
 13. **One floor source per room.** `Room.floor_source_mode` (`jitsi_bot` | `program_ingest`) decides who may publish `{event_slug}/{room_id}/floor`; the portal's MediaMTX publish hook (`/internal/mediamtx/auth`) enforces it. Never rely on `overridePublisher` to pick between the floor bot and an encoder, and never start the floor bot while program ingest owns the room.
-14. **Program ingest secrets are shown once.** Only the SHA-256 digest is stored; never log, render, or return the secret after creation.
+14. **Program ingest secrets are shown once.** Only a bcrypt hash is stored; never log, render, or return the secret after creation.
 
 ---
 

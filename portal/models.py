@@ -148,7 +148,7 @@ class Room(Base):
     floor_source_mode: Mapped[str] = mapped_column(
         String(20), default=FLOOR_SOURCE_JITSI_BOT, server_default=sa.text(f"'{FLOOR_SOURCE_JITSI_BOT}'")
     )
-    # SHA-256 of the program ingest publish secret; the plaintext is shown once.
+    # bcrypt hash of the program ingest publish secret; the plaintext is shown once.
     program_ingest_secret_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     program_ingest_secret_hint: Mapped[str | None] = mapped_column(String(8), nullable=True, default=None)
     program_ingest_secret_created_at: Mapped[datetime | None] = mapped_column(

@@ -25,7 +25,8 @@ def test_issued_secret_is_random_prefixed_and_only_digest_is_stored():
     assert first.secret.startswith(SECRET_PREFIX)
     assert first.secret != second.secret
     assert len(first.secret) > 40
-    assert first.digest == hash_ingest_secret(first.secret)
+    assert first.digest.startswith("$2")
+    assert first.digest != hash_ingest_secret(first.secret)  # salted
     assert first.secret not in first.digest
     assert first.hint == first.secret[-4:]
 
@@ -99,3 +100,11 @@ def test_secret_rejected_when_room_uses_floor_bot():
 def test_unsupported_expiry_rejected():
     with pytest.raises(ValueError):
         issue_ingest_secret(expires_in_days=3)
+
+
+def test_corrupt_stored_hash_rejected():
+    room = _room()
+    issued = issue_ingest_secret()
+    apply_issued_secret(room, issued)
+    room.program_ingest_secret_hash = "0" * 64
+    assert not verify_room_ingest_secret(room, issued.secret)
