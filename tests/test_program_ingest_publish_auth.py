@@ -18,7 +18,9 @@ from portal.program_ingest.publish_auth import (
     parse_floor_path,
 )
 
-HOOK = "/internal/mediamtx/auth"
+HOOK_PATH = "/internal/mediamtx/auth"
+HOOK_KEY = "test-hook-key"
+HOOK = f"{HOOK_PATH}?key={HOOK_KEY}"
 
 
 @pytest.fixture(autouse=True)
@@ -28,7 +30,8 @@ async def setup_db():
     configure("sqlite+aiosqlite://")
     await init_db()
     publish_auth.failure_limiter.reset()
-    yield
+    with patch.object(publish_auth.settings, "mediamtx_auth_hook_secret", HOOK_KEY):
+        yield
     publish_auth.failure_limiter.reset()
     await dispose()
 
@@ -210,10 +213,9 @@ async def test_hook_returns_uniform_401_and_200(client):
 @pytest.mark.anyio
 async def test_hook_requires_shared_key_when_configured(client):
     body = {"action": "publish", "path": "ev/1/en", "protocol": "webrtc"}
-    with patch.object(publish_auth.settings, "mediamtx_auth_hook_secret", "hook-secret"):
-        assert (await client.post(HOOK, json=body)).status_code == 401
-        assert (await client.post(f"{HOOK}?key=wrong", json=body)).status_code == 401
-        assert (await client.post(f"{HOOK}?key=hook-secret", json=body)).status_code == 200
+    assert (await client.post(HOOK_PATH, json=body)).status_code == 401
+    assert (await client.post(f"{HOOK_PATH}?key=wrong", json=body)).status_code == 401
+    assert (await client.post(HOOK, json=body)).status_code == 200
 
 
 @pytest.mark.anyio
@@ -245,40 +247,22 @@ async def test_access_log_redacts_hook_key():
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize(
-    ("client_host", "debug", "expected"),
-    [
-        ("93.184.216.34", False, 401),  # internet caller on the published port
-        ("172.18.0.4", False, 200),  # MediaMTX over the Docker network
-        ("127.0.0.1", False, 200),
-        ("93.184.216.34", True, 200),  # local development
-    ],
-)
-async def test_hook_without_secret_only_trusts_private_callers(client_host, debug, expected):
+@pytest.mark.parametrize(("debug", "expected"), [(False, 401), (True, 200)])
+async def test_hook_without_secret_is_open_only_in_debug(client, debug, expected):
     body = {"action": "publish", "path": "ev/1/en", "protocol": "webrtc", "ip": "198.51.100.1"}
-    transport = ASGITransport(app=app, client=(client_host, 40000))
     with (
         patch.object(publish_auth.settings, "mediamtx_auth_hook_secret", ""),
         patch.object(publish_auth.settings, "debug", debug),
     ):
-        async with AsyncClient(transport=transport, base_url="http://test") as c:
-            assert (await c.post(HOOK, json=body)).status_code == expected
+        assert (await client.post(HOOK_PATH, json=body)).status_code == expected
 
 
 @pytest.mark.anyio
-async def test_configured_secret_required_even_from_private_network():
-    body = {"action": "publish", "path": "ev/1/en", "protocol": "webrtc"}
-    transport = ASGITransport(app=app, client=("172.18.0.4", 40000))
-    with patch.object(publish_auth.settings, "mediamtx_auth_hook_secret", "hook-secret"):
-        async with AsyncClient(transport=transport, base_url="http://test") as c:
-            assert (await c.post(HOOK, json=body)).status_code == 401
-
-
-@pytest.mark.anyio
-async def test_missing_hook_secret_warns_in_production(caplog):
+async def test_missing_hook_secret_refuses_production_startup():
     from portal.config import Settings
 
-    s = Settings(debug=False, secret_key="a-strong-random-secret-0123456789abcdef", mediamtx_auth_hook_secret="")
-    with caplog.at_level(logging.WARNING, logger="portal.config"):
-        s.validate_production_secrets()
-    assert "MEDIAMTX_AUTH_HOOK_SECRET" in caplog.text
+    strong = "a-strong-random-secret-0123456789abcdef"
+    with pytest.raises(RuntimeError, match="MEDIAMTX_AUTH_HOOK_SECRET"):
+        Settings(debug=False, secret_key=strong, mediamtx_auth_hook_secret="").validate_production_secrets()
+    Settings(debug=False, secret_key=strong, mediamtx_auth_hook_secret="k" * 32).validate_production_secrets()
+    Settings(debug=True, secret_key=strong, mediamtx_auth_hook_secret="").validate_production_secrets()

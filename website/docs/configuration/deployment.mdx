@@ -198,7 +198,7 @@ MediaMTX authorizes every publish by calling the portal (`authMethod: http` in `
 
   - Room floor paths accept only their configured floor source (Jitsi floor bot or Program Stream Ingest); anonymous floor publishes are refused.
   - Reads (WHEP/HLS/RTSP) and the Control API are excluded from the hook.
-  - Without `MEDIAMTX_AUTH_HOOK_SECRET`, the hook only answers loopback/private-network callers (MediaMTX on the Docker network); internet clients reaching port 8000 directly are refused. Set the secret anyway, because private-network peers could otherwise call it.
+  - `MEDIAMTX_AUTH_HOOK_SECRET` is **required outside debug mode**: the portal refuses to start without it, exactly like a weak `SECRET_KEY`. Add it to the server's `.env` before upgrading.
   - If the portal is down, MediaMTX refuses all new publishes (fail closed). Existing sessions continue.
   - For native development with MediaMTX outside Docker, run it with `MTX_AUTHHTTPADDRESS=http://localhost:8000/internal/mediamtx/auth`.
 

@@ -55,7 +55,7 @@ Produced events can send the **same program feed they stream to YouTube** to Vox
 3. In OBS 30+, set **Settings → Stream → Service: WHIP**, with the shown ingest server URL and the secret as the **Bearer Token**. Keep YouTube as a second output, for example with the Multiple RTMP outputs plugin.
 4. The room card shows waiting → processing, codecs, connect/disconnect times and warnings. Rotate or revoke the secret at any time; the encoder is disconnected immediately.
 
-MediaMTX now authorizes every publish through the portal (`/internal/mediamtx/auth`). Set `MEDIAMTX_AUTH_HOOK_SECRET` in `.env` for production. Room floor paths accept only their configured source. The MediaMTX Control API (9997) and RTSP (8554) ports are bound to `127.0.0.1`. See the [Program Stream Ingest guide](website/docs/admin/program-stream-ingest.mdx) for encoder setup, sync-offset calibration, capacity, and troubleshooting.
+MediaMTX now authorizes every publish through the portal (`/internal/mediamtx/auth`). `MEDIAMTX_AUTH_HOOK_SECRET` is required in `.env` when `DEBUG=false`; the portal refuses to start without it. Room floor paths accept only their configured source. The MediaMTX Control API (9997) and RTSP (8554) ports are bound to `127.0.0.1`. See the [Program Stream Ingest guide](website/docs/admin/program-stream-ingest.mdx) for encoder setup, sync-offset calibration, capacity, and troubleshooting.
 
 
 ---
@@ -88,7 +88,7 @@ echo "ADMIN_PASSWORD=$(openssl rand -hex 16)" >> .env
 # Required for API key encryption: set your encryption key (must be 32 characters or longer)
 echo "API_KEY_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> .env
 
-# Recommended: shared secret so only MediaMTX can call the portal's publish auth hook
+# Required (outside DEBUG mode): shared secret so only MediaMTX can call the portal's publish auth hook
 echo "MEDIAMTX_AUTH_HOOK_SECRET=$(openssl rand -hex 32)" >> .env
 
 # Required for Jitsi video: set the IP JVB advertises to browsers

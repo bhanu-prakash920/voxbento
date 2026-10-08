@@ -137,7 +137,7 @@ The room's separate **audio synchronization delay** still controls the original-
 - The encoder connects to the same public HTTPS host as browsers (`MEDIAMTX_WHIP_BASE`, or `PROGRAM_INGEST_PUBLIC_BASE` if set). Caddy already proxies every path ending in `/whip` to MediaMTX on port 8889.
 - Media flows over WebRTC to UDP `8189`, which must be reachable from the encoder's network. Set `webrtcAdditionalHosts` in `mediamtx.yml` to your public IP or domain.
 - The MediaMTX Control API (9997) and RTSP (8554) are internal and bound to `127.0.0.1` on the host. The `/internal/*` portal hook is blocked at Caddy.
-- Set a long random `MEDIAMTX_AUTH_HOOK_SECRET` so only MediaMTX can call the publish authorization hook.
+- `MEDIAMTX_AUTH_HOOK_SECRET` (required outside debug mode) ensures only MediaMTX can call the publish authorization hook.
 
 ## Troubleshooting
 

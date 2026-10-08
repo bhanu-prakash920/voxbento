@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import logging
 from urllib.parse import urlparse
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -36,8 +33,7 @@ class Settings(BaseSettings):
     mediamtx_rtsp_base: str = "rtsp://mediamtx:8554"
     floor_bot_base: str = "http://floor-bot:8080"
     # Shared secret MediaMTX appends as ?key= when calling the publish auth
-    # hook (/internal/mediamtx/auth). When empty, production only accepts
-    # loopback/private-network callers (and logs a startup warning).
+    # hook (/internal/mediamtx/auth). Required outside DEBUG mode.
     mediamtx_auth_hook_secret: str = ""
 
     # ── Program Stream Ingest ────────────────────────────────────────────────
@@ -101,10 +97,11 @@ class Settings(BaseSettings):
         return self.jwt_secret or self.secret_key
 
     def validate_production_secrets(self) -> None:
-        """Refuse to start with a known-weak default secret outside debug mode.
+        """Refuse to start with a weak or missing secret outside debug mode.
 
         Called once at application startup. No-op in debug mode so local
-        development works without configuring a SECRET_KEY.
+        development works without configuring SECRET_KEY or
+        MEDIAMTX_AUTH_HOOK_SECRET.
         """
         if self.debug:
             return
@@ -116,9 +113,11 @@ class Settings(BaseSettings):
                 "Generate one with: openssl rand -hex 32"
             )
         if not self.mediamtx_auth_hook_secret:
-            logger.warning(
-                "MEDIAMTX_AUTH_HOOK_SECRET is not set; the MediaMTX publish auth hook only accepts "
-                "private-network callers. Set it (openssl rand -hex 32) for production."
+            raise RuntimeError(
+                "MEDIAMTX_AUTH_HOOK_SECRET is not set. MediaMTX authorizes every publish through "
+                "/internal/mediamtx/auth and must present this shared secret. Set the same value for "
+                "the portal and MediaMTX (docker-compose passes it to both). "
+                "Generate one with: openssl rand -hex 32"
             )
 
     # Transcription Settings
