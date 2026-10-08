@@ -109,6 +109,8 @@ The card also shows last connected and disconnected times, detected audio and vi
 - Only a bcrypt hash of the secret is stored. It never appears in logs, status responses, or rendered pages after creation.
 - Failed publish attempts are rate-limited per client IP (`PROGRAM_INGEST_AUTH_MAX_FAILURES` per `PROGRAM_INGEST_AUTH_FAILURE_WINDOW_SECONDS`). All refusals are the same `401`, whether the room exists or not.
 
+If MediaMTX cannot confirm that the current encoder was disconnected, rotation, revocation and floor-source switches fail with an error and **nothing is changed**, so an old credential or source can never stay live after you were told it was replaced.
+
 Rotating or revoking the Voxbento secret never touches your YouTube key.
 
 ## Synchronizing with the YouTube playback
@@ -142,6 +144,7 @@ The room's separate **audio synchronization delay** still controls the original-
 | Symptom | Check |
 |---|---|
 | Encoder fails to connect with `401` | The secret was rotated or revoked, has expired, or was pasted with extra spaces; the room is still in Jitsi floor bot mode; too many failed attempts from this IP (wait for the window to pass); or the server's ingest limit is reached. |
+| Rotate, revoke or switching the floor source reports that the publisher could not be disconnected | The MediaMTX Control API (9997) is unreachable from the portal. Nothing was changed; restore MediaMTX and retry. |
 | Encoder fails to connect, nothing logged by the portal | MediaMTX cannot reach the portal hook. Check `MTX_AUTHHTTPADDRESS` and that `MEDIAMTX_AUTH_HOOK_SECRET` matches on both containers. |
 | Connects, but the state is **Degraded: no audio track** | The encoder is sending video only. Enable an audio track (Opus or AAC). |
 | **Degraded: no decodable audio** | Send Opus or AAC. |

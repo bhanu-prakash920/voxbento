@@ -158,17 +158,22 @@ async def fetch_path_snapshots() -> dict[str, PathSnapshot] | None:
             return snapshots
 
 
-async def remove_path_config(path: str) -> None:
-    """Drop any runtime path config (e.g. alwaysAvailable Opus) so the encoder's own tracks are used."""
+async def remove_path_config(path: str) -> bool:
+    """Drop any runtime path config (e.g. alwaysAvailable Opus) so the encoder's own tracks are used.
+
+    :returns: whether the path is now free of a runtime config (removed or never present).
+    """
     _created_paths.discard(path)
     url = f"{settings.mediamtx_api_base}/v3/config/paths/delete/{quote(path, safe='/')}"
     try:
         response = await get_http_client().delete(url, timeout=3.0)
     except httpx.HTTPError as exc:
         logger.warning("Could not remove MediaMTX path config path=%s: %s", path, exc)
-        return
+        return False
     if response.status_code not in (200, 404):
         logger.warning("MediaMTX path config removal failed path=%s status=%s", path, response.status_code)
+        return False
+    return True
 
 
 # MediaMTX source type → Control API kick collection.
@@ -182,27 +187,37 @@ KICK_ENDPOINTS = {
 }
 
 
+class PublisherKickError(Exception):
+    """MediaMTX could not confirm that the current publisher was disconnected."""
+
+
 async def kick_publisher(path: str) -> bool:
-    """Disconnect whoever is publishing ``path`` so a revoked credential stops immediately.
+    """Disconnect whoever is publishing ``path``.
 
     MediaMTX only authenticates at connect time, so revocation, rotation and
     source-mode switches must also end the established session.
+
+    :returns: ``True`` if a session was kicked, ``False`` if nobody was publishing.
+    :raises PublisherKickError: when MediaMTX is unreachable or the kick fails,
+        i.e. the old publisher may still be connected.
     """
     snapshot = await fetch_path_snapshot(path)
-    if snapshot is None or not snapshot.online or not snapshot.source_id:
+    if snapshot is None:
+        raise PublisherKickError(f"MediaMTX status unavailable for {path}")
+    if not snapshot.online:
         return False
     collection = KICK_ENDPOINTS.get(snapshot.source_type or "")
-    if collection is None:
-        logger.warning("No kick endpoint for program ingest source_type=%s path=%s", snapshot.source_type, path)
-        return False
+    if collection is None or not snapshot.source_id:
+        raise PublisherKickError(f"Cannot disconnect source type {snapshot.source_type!r} on {path}")
     url = f"{settings.mediamtx_api_base}/v3/{collection}/kick/{quote(snapshot.source_id, safe='')}"
     try:
         response = await get_http_client().post(url, timeout=3.0)
     except httpx.HTTPError as exc:
-        logger.warning("Could not kick program ingest publisher path=%s: %s", path, exc)
+        raise PublisherKickError(f"MediaMTX kick request failed for {path}") from exc
+    if response.status_code == 404:
+        # The session ended between the status read and the kick.
         return False
     if response.status_code != 200:
-        logger.warning("MediaMTX kick failed path=%s status=%s", path, response.status_code)
-        return False
+        raise PublisherKickError(f"MediaMTX kick for {path} returned HTTP {response.status_code}")
     logger.info("program ingest publisher disconnected path=%s source_type=%s", path, snapshot.source_type)
     return True

@@ -28,7 +28,7 @@ from portal.program_ingest.credentials import (
     issue_ingest_secret,
     revoke_ingest_secret,
 )
-from portal.program_ingest.mediamtx import kick_publisher, remove_path_config
+from portal.program_ingest.mediamtx import PublisherKickError, kick_publisher, remove_path_config
 from portal.program_ingest.supervisor import IngestState, supervisor
 from portal.transcription.floor import (
     FLOOR_LANGUAGE,
@@ -46,6 +46,10 @@ router = APIRouter()
 ROOM_PREFIX = "/admin/events/{event_id}/rooms/{room_id}/program-ingest"
 MAX_SYNC_OFFSET_MS = 30_000
 NO_STORE = {"Cache-Control": "no-store"}
+KICK_FAILED_DETAIL = (
+    "Could not disconnect the current floor publisher from MediaMTX, so nothing was changed. "
+    "Check that MediaMTX is running and try again."
+)
 
 
 class CredentialRequest(BaseModel):
@@ -132,6 +136,28 @@ def room_page(request: Request, event_id: int, room_id: int) -> RedirectResponse
     )
 
 
+async def disconnect_before_change(path: str) -> None:
+    """Disconnect the current floor publisher, or abort the change with 503.
+
+    MediaMTX authenticates only at connect time, so a mode switch, rotation or
+    revocation must not be committed while the old publisher may stay live.
+    Nobody publishing counts as success.
+    """
+    try:
+        await kick_publisher(path)
+    except PublisherKickError as exc:
+        logger.warning("floor publisher disconnect failed; change aborted path=%s: %s", path, exc)
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=KICK_FAILED_DETAIL) from exc
+
+
+async def disconnect_after_change(path: str) -> None:
+    """Kick a publisher that reconnected under the old rules before the change was committed."""
+    try:
+        await kick_publisher(path)
+    except PublisherKickError as exc:
+        logger.warning("floor publisher re-check after change failed path=%s: %s", path, exc)
+
+
 @router.get(f"{ROOM_PREFIX}/status", dependencies=[Depends(require_event_owner)])
 async def program_ingest_status(event_id: int, room_id: int) -> JSONResponse:
     room = await load_room(event_id, room_id)
@@ -149,23 +175,25 @@ async def program_ingest_set_mode(request: Request, event_id: int, room_id: int)
     if mode == previous:
         return room_page(request, event_id, room_id)
 
+    event_slug = room.event.slug
+    path = floor_path(room, event_slug)
+    await disconnect_before_change(path)
+
     async with get_session() as session:
         stored = await session.get(Room, room_id)
         stored.floor_source_mode = mode
 
-    event_slug = room.event.slug
-    path = floor_path(room, event_slug)
     if mode == FLOOR_SOURCE_PROGRAM_INGEST:
-        # Hand the floor path over: the bot leaves, its worker stops, and the
-        # Opus-only alwaysAvailable config is dropped so encoder tracks fit.
+        # Hand the floor path over: the bot leaves and its worker stops. The
+        # Opus-only alwaysAvailable config is dropped here and re-checked by
+        # the supervisor until MediaMTX confirms it is gone.
         await request_floor_bot_stop(event_slug, room_id)
         await stop_floor_transcription_worker(event_slug, room_id)
-        await kick_publisher(path)
         await remove_path_config(path)
     else:
         await supervisor.release_room(room_id)
         await stop_floor_transcription_worker(event_slug, room_id)
-        await kick_publisher(path)
+    await disconnect_after_change(path)
     logger.info("floor source changed room_id=%s from=%s to=%s", room_id, previous, mode)
     return room_page(request, event_id, room_id)
 
@@ -180,11 +208,14 @@ async def program_ingest_rotate_credential(event_id: int, room_id: int, body: Cr
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     replaced = bool(room.program_ingest_secret_hash)
+    path = floor_path(room, room.event.slug)
+    if replaced:
+        # The previous credential may still hold an authenticated session.
+        await disconnect_before_change(path)
     async with get_session() as session:
         apply_issued_secret(await session.get(Room, room_id), issued)
     if replaced:
-        # The previous credential may still hold an authenticated session.
-        await kick_publisher(floor_path(room, room.event.slug))
+        await disconnect_after_change(path)
     logger.info("program ingest credential %s room_id=%s", "rotated" if replaced else "issued", room_id)
     return JSONResponse(
         {
@@ -201,9 +232,11 @@ async def program_ingest_rotate_credential(event_id: int, room_id: int, body: Cr
 @router.post(f"{ROOM_PREFIX}/credential/revoke", dependencies=[Depends(require_event_owner)])
 async def program_ingest_revoke_credential(event_id: int, room_id: int) -> JSONResponse:
     room = await load_room(event_id, room_id)
+    path = floor_path(room, room.event.slug)
+    await disconnect_before_change(path)
     async with get_session() as session:
         revoke_ingest_secret(await session.get(Room, room_id))
-    await kick_publisher(floor_path(room, room.event.slug))
+    await disconnect_after_change(path)
     logger.info("program ingest credential revoked room_id=%s", room_id)
     return JSONResponse({"revoked": True}, headers=NO_STORE)
 

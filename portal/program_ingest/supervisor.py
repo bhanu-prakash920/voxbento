@@ -31,7 +31,7 @@ from portal.booth_identity import make_mediamtx_path
 from portal.config import settings
 from portal.database import get_session
 from portal.models import FLOOR_SOURCE_PROGRAM_INGEST, Event, Room, utc_now
-from portal.program_ingest.mediamtx import OFFLINE, PathSnapshot, fetch_path_snapshots
+from portal.program_ingest.mediamtx import OFFLINE, PathSnapshot, fetch_path_snapshots, remove_path_config
 from portal.transcription.floor import (
     FLOOR_LANGUAGE,
     floor_transcription_issue,
@@ -130,11 +130,14 @@ async def record_ingest_timestamp(room_id: int, *, connected: bool, when: dateti
 class ProgramIngestSupervisor:
     config: SupervisorConfig = field(default_factory=SupervisorConfig.from_settings)
     fetch_snapshots: Callable[[], Awaitable[dict[str, PathSnapshot] | None]] = fetch_path_snapshots
+    clear_path_config: Callable[[str], Awaitable[bool]] = remove_path_config
     worker_ops: WorkerOps = field(default_factory=WorkerOps)
     clock: Callable[[], float] = time.monotonic
     statuses: dict[int, RoomIngestStatus] = field(default_factory=dict)
     # Rooms whose floor worker this supervisor started, with their event slug.
     owned_workers: dict[int, str] = field(default_factory=dict)
+    # Rooms whose floor path MediaMTX confirmed has no runtime (alwaysAvailable) config.
+    path_config_cleared: set[int] = field(default_factory=set)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def status_for(self, room_id: int) -> RoomIngestStatus | None:
@@ -164,6 +167,7 @@ class ProgramIngestSupervisor:
 
     async def release_room_locked(self, room_id: int) -> None:
         self.statuses.pop(room_id, None)
+        self.path_config_cleared.discard(room_id)
         event_slug = self.owned_workers.pop(room_id, None)
         if event_slug is not None:
             await self.worker_ops.stop(event_slug, room_id)
@@ -180,8 +184,20 @@ class ProgramIngestSupervisor:
             snapshots = await self.fetch_snapshots()
             for room in rooms:
                 path = make_mediamtx_path(room.event.slug, room.id, FLOOR_LANGUAGE)
+                await self.ensure_path_config_cleared(room.id, path)
                 snapshot = None if snapshots is None else snapshots.get(path, OFFLINE)
                 await self.evaluate_room(room, snapshot)
+
+    async def ensure_path_config_cleared(self, room_id: int, path: str) -> None:
+        """Retry removing the Opus-only alwaysAvailable config until MediaMTX confirms it.
+
+        The mode switch removes it once; if MediaMTX was briefly unavailable the
+        encoder's tracks (e.g. H264 + AAC) could otherwise be refused.
+        """
+        if room_id in self.path_config_cleared:
+            return
+        if await self.clear_path_config(path):
+            self.path_config_cleared.add(room_id)
 
     async def evaluate_room(self, room: Room, snapshot: PathSnapshot | None) -> None:
         """Advance one room's state from its path snapshot (``None`` = MediaMTX unreachable)."""

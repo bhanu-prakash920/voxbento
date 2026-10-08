@@ -79,7 +79,12 @@ def make_supervisor(snapshots: dict[str, PathSnapshot | None], workers: FakeWork
             return None
         return {path: snap for path, snap in snapshots.items() if snap is not None and snap.online}
 
-    return ProgramIngestSupervisor(config=config, fetch_snapshots=fetch, worker_ops=workers.ops(), clock=clock)
+    async def clear(path: str) -> bool:
+        return True
+
+    return ProgramIngestSupervisor(
+        config=config, fetch_snapshots=fetch, clear_path_config=clear, worker_ops=workers.ops(), clock=clock
+    )
 
 
 async def make_room(slug: str, *, transcription: bool = True, mode: str = FLOOR_SOURCE_PROGRAM_INGEST) -> Room:
@@ -426,7 +431,10 @@ async def test_real_worker_registry_never_duplicates_floor_worker():
     def fake_start(self):
         self.state = worker_mod.State.RUNNING
 
-    sup = ProgramIngestSupervisor(config=config, fetch_snapshots=fetch, clock=clock)
+    async def clear(p: str) -> bool:
+        return True
+
+    sup = ProgramIngestSupervisor(config=config, fetch_snapshots=fetch, clear_path_config=clear, clock=clock)
     booth_id = f"ev-real-{room.id}-floor"
     with (
         patch.object(worker_mod.TranscriptionWorkerSession, "start", fake_start),
@@ -568,3 +576,57 @@ async def test_fetch_path_snapshots_pages_through_list():
     down = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(500)))
     with patch.object(mediamtx, "get_http_client", return_value=down):
         assert await mediamtx.fetch_path_snapshots() is None
+
+
+@pytest.mark.anyio
+async def test_path_config_removal_retried_until_confirmed():
+    room = await make_room("ev-cfg")
+    attempts: list[str] = []
+    results = iter([False, False, True])
+
+    async def flaky_clear(path: str) -> bool:
+        attempts.append(path)
+        return next(results)
+
+    sup = make_supervisor({}, FakeWorkers(), Clock())
+    sup.clear_path_config = flaky_clear
+    for _ in range(5):
+        await sup.tick()
+    assert attempts == [f"ev-cfg/{room.id}/floor"] * 3
+    assert room.id in sup.path_config_cleared
+
+
+@pytest.mark.anyio
+async def test_kick_publisher_raises_when_mediamtx_fails():
+    import httpx
+
+    from portal.program_ingest import mediamtx
+
+    def kick_fails(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"online": True, "source": {"type": "webRTCSession", "id": "s1"}})
+        return httpx.Response(500)
+
+    for transport in (
+        httpx.MockTransport(kick_fails),
+        httpx.MockTransport(lambda request: httpx.Response(500)),
+    ):
+        client = httpx.AsyncClient(transport=transport)
+        with patch.object(mediamtx, "get_http_client", return_value=client), pytest.raises(mediamtx.PublisherKickError):
+            await mediamtx.kick_publisher("ev/1/floor")
+
+
+@pytest.mark.anyio
+async def test_kick_publisher_session_already_gone_is_success():
+    import httpx
+
+    from portal.program_ingest import mediamtx
+
+    def gone(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"online": True, "source": {"type": "webRTCSession", "id": "s1"}})
+        return httpx.Response(404)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(gone))
+    with patch.object(mediamtx, "get_http_client", return_value=client):
+        assert await mediamtx.kick_publisher("ev/1/floor") is False

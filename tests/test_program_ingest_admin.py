@@ -111,7 +111,8 @@ async def test_switching_back_to_bot_releases_ingest(client, media_ops):
         r = await client.post(f"{base(ev_id, room_id)}/mode", data={"floor_source_mode": "jitsi_bot"}, cookies=cookies)
     assert r.status_code == 303
     release.assert_awaited_once_with(room_id)
-    assert media_ops["kick"].await_count == 2
+    # Each switch disconnects before committing and re-checks afterwards.
+    assert media_ops["kick"].await_count == 4
     assert (await stored_room(room_id)).floor_source_mode == FLOOR_SOURCE_JITSI_BOT
 
 
@@ -169,7 +170,7 @@ async def test_rotation_kicks_current_publisher_and_invalidates_old_secret(clien
     kicks_before = media_ops["kick"].await_count
     second = (await client.post(f"{base(ev_id, room_id)}/credential", json={}, cookies=cookies)).json()["secret"]
 
-    assert media_ops["kick"].await_count == kicks_before + 1
+    assert media_ops["kick"].await_count == kicks_before + 2
     room = await stored_room(room_id)
     assert not verify_room_ingest_secret(room, first)
     assert verify_room_ingest_secret(room, second)
@@ -300,3 +301,56 @@ async def test_timestamps_are_reported_as_utc(client, media_ops):
         (await s.get(Room, room_id)).program_ingest_last_connected_at = datetime(2026, 10, 8, 9, 30)
     data = (await client.get(f"{base(ev_id, room_id)}/status", cookies={"user_token": token})).json()
     assert data["last_connected_at"] == "2026-10-08T09:30:00+00:00"
+
+
+@pytest.mark.anyio
+async def test_mode_switch_aborts_when_publisher_cannot_be_disconnected(client, media_ops):
+    from portal.program_ingest.mediamtx import PublisherKickError
+
+    token, ev_id, room_id = await make_owner_and_room()
+    media_ops["kick"].side_effect = PublisherKickError("mediamtx down")
+    r = await client.post(
+        f"{base(ev_id, room_id)}/mode",
+        data={"floor_source_mode": "program_ingest"},
+        cookies={"user_token": token},
+        headers={"Accept": "application/json"},
+    )
+    assert r.status_code == 503
+    assert "nothing was changed" in r.json()["detail"]
+    assert (await stored_room(room_id)).floor_source_mode == FLOOR_SOURCE_JITSI_BOT
+    media_ops["bot_stop"].assert_not_awaited()
+    media_ops["worker_stop"].assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_rotation_aborts_when_publisher_cannot_be_disconnected(client, media_ops):
+    from portal.program_ingest.credentials import verify_room_ingest_secret
+    from portal.program_ingest.mediamtx import PublisherKickError
+
+    token, ev_id, room_id = await make_owner_and_room()
+    cookies = {"user_token": token}
+    await client.post(f"{base(ev_id, room_id)}/mode", data={"floor_source_mode": "program_ingest"}, cookies=cookies)
+    first = (await client.post(f"{base(ev_id, room_id)}/credential", json={}, cookies=cookies)).json()["secret"]
+
+    media_ops["kick"].side_effect = PublisherKickError("mediamtx down")
+    r = await client.post(f"{base(ev_id, room_id)}/credential", json={}, cookies=cookies)
+    assert r.status_code == 503
+    assert "secret" not in r.json()
+    assert verify_room_ingest_secret(await stored_room(room_id), first)
+
+    r = await client.post(f"{base(ev_id, room_id)}/credential/revoke", cookies=cookies)
+    assert r.status_code == 503
+    assert verify_room_ingest_secret(await stored_room(room_id), first)
+
+
+@pytest.mark.anyio
+async def test_first_secret_needs_no_disconnect(client, media_ops):
+    from portal.program_ingest.mediamtx import PublisherKickError
+
+    token, ev_id, room_id = await make_owner_and_room()
+    cookies = {"user_token": token}
+    await client.post(f"{base(ev_id, room_id)}/mode", data={"floor_source_mode": "program_ingest"}, cookies=cookies)
+    media_ops["kick"].side_effect = PublisherKickError("mediamtx down")
+    r = await client.post(f"{base(ev_id, room_id)}/credential", json={}, cookies=cookies)
+    assert r.status_code == 200
+    assert r.json()["secret"].startswith("vbi_")
