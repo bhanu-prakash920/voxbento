@@ -242,3 +242,43 @@ async def test_access_log_redacts_hook_key():
     )
     _UvicornTokenRedactor().filter(record)
     assert "hook-secret-value" not in record.getMessage()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("client_host", "debug", "expected"),
+    [
+        ("93.184.216.34", False, 401),  # internet caller on the published port
+        ("172.18.0.4", False, 200),  # MediaMTX over the Docker network
+        ("127.0.0.1", False, 200),
+        ("93.184.216.34", True, 200),  # local development
+    ],
+)
+async def test_hook_without_secret_only_trusts_private_callers(client_host, debug, expected):
+    body = {"action": "publish", "path": "ev/1/en", "protocol": "webrtc", "ip": "198.51.100.1"}
+    transport = ASGITransport(app=app, client=(client_host, 40000))
+    with (
+        patch.object(publish_auth.settings, "mediamtx_auth_hook_secret", ""),
+        patch.object(publish_auth.settings, "debug", debug),
+    ):
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            assert (await c.post(HOOK, json=body)).status_code == expected
+
+
+@pytest.mark.anyio
+async def test_configured_secret_required_even_from_private_network():
+    body = {"action": "publish", "path": "ev/1/en", "protocol": "webrtc"}
+    transport = ASGITransport(app=app, client=("172.18.0.4", 40000))
+    with patch.object(publish_auth.settings, "mediamtx_auth_hook_secret", "hook-secret"):
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            assert (await c.post(HOOK, json=body)).status_code == 401
+
+
+@pytest.mark.anyio
+async def test_missing_hook_secret_warns_in_production(caplog):
+    from portal.config import Settings
+
+    s = Settings(debug=False, secret_key="a-strong-random-secret-0123456789abcdef", mediamtx_auth_hook_secret="")
+    with caplog.at_level(logging.WARNING, logger="portal.config"):
+        s.validate_production_secrets()
+    assert "MEDIAMTX_AUTH_HOOK_SECRET" in caplog.text

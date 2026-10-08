@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 from urllib.parse import urlparse
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 
 class Settings(BaseSettings):
@@ -33,7 +36,8 @@ class Settings(BaseSettings):
     mediamtx_rtsp_base: str = "rtsp://mediamtx:8554"
     floor_bot_base: str = "http://floor-bot:8080"
     # Shared secret MediaMTX appends as ?key= when calling the publish auth
-    # hook (/internal/mediamtx/auth). Empty disables the check (local dev only).
+    # hook (/internal/mediamtx/auth). When empty, production only accepts
+    # loopback/private-network callers (and logs a startup warning).
     mediamtx_auth_hook_secret: str = ""
 
     # ── Program Stream Ingest ────────────────────────────────────────────────
@@ -110,6 +114,11 @@ class Settings(BaseSettings):
                 "SECRET_KEY (or JWT_SECRET) is set to a known-weak default value. "
                 "Set a strong random value before running in production. "
                 "Generate one with: openssl rand -hex 32"
+            )
+        if not self.mediamtx_auth_hook_secret:
+            logger.warning(
+                "MEDIAMTX_AUTH_HOOK_SECRET is not set; the MediaMTX publish auth hook only accepts "
+                "private-network callers. Set it (openssl rand -hex 32) for production."
             )
 
     # Transcription Settings
