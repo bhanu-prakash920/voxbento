@@ -6,7 +6,7 @@ import pytest
 
 from portal.models import FLOOR_SOURCE_JITSI_BOT, FLOOR_SOURCE_PROGRAM_INGEST, Room, utc_now
 from portal.program_ingest.credentials import (
-    SECRET_PREFIX,
+    CREDENTIAL_PREFIX,
     apply_issued_secret,
     hash_ingest_secret,
     issue_ingest_secret,
@@ -22,7 +22,7 @@ def _room(mode: str = FLOOR_SOURCE_PROGRAM_INGEST) -> Room:
 def test_issued_secret_is_random_prefixed_and_only_digest_is_stored():
     first = issue_ingest_secret()
     second = issue_ingest_secret()
-    assert first.secret.startswith(SECRET_PREFIX)
+    assert first.secret.startswith(CREDENTIAL_PREFIX)
     assert first.secret != second.secret
     assert len(first.secret) > 40
     assert first.digest.startswith("$2")

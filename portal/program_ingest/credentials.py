@@ -16,7 +16,7 @@ from datetime import datetime, timedelta
 from portal.auth import hash_password, verify_password
 from portal.models import FLOOR_SOURCE_PROGRAM_INGEST, Room, utc_now
 
-SECRET_PREFIX = "vbi_"
+CREDENTIAL_PREFIX = "vbi_"
 HINT_LENGTH = 4
 # Expiry choices offered in the admin UI; ``None`` means "never expires".
 ALLOWED_EXPIRY_DAYS = frozenset({1, 7, 30, 90})
@@ -39,7 +39,7 @@ def issue_ingest_secret(expires_in_days: int | None = None, now: datetime | None
     if expires_in_days is not None and expires_in_days not in ALLOWED_EXPIRY_DAYS:
         raise ValueError(f"Unsupported expiry; choose one of {sorted(ALLOWED_EXPIRY_DAYS)} days or none.")
     created_at = now or utc_now()
-    secret = SECRET_PREFIX + secrets.token_urlsafe(32)
+    secret = CREDENTIAL_PREFIX + secrets.token_urlsafe(32)
     return IssuedSecret(
         secret=secret,
         digest=hash_ingest_secret(secret),
