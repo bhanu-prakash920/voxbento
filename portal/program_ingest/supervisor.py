@@ -181,23 +181,28 @@ class ProgramIngestSupervisor:
                 await self.release_room_locked(stale_id)
             if not rooms:
                 return
+            paths = {room.id: make_mediamtx_path(room.event.slug, room.id, FLOOR_LANGUAGE) for room in rooms}
+            await self.clear_pending_path_configs(paths)
             snapshots = await self.fetch_snapshots()
             for room in rooms:
-                path = make_mediamtx_path(room.event.slug, room.id, FLOOR_LANGUAGE)
-                await self.ensure_path_config_cleared(room.id, path)
-                snapshot = None if snapshots is None else snapshots.get(path, OFFLINE)
+                snapshot = None if snapshots is None else snapshots.get(paths[room.id], OFFLINE)
                 await self.evaluate_room(room, snapshot)
 
-    async def ensure_path_config_cleared(self, room_id: int, path: str) -> None:
+    async def clear_pending_path_configs(self, paths: dict[int, str]) -> None:
         """Retry removing the Opus-only alwaysAvailable config until MediaMTX confirms it.
 
         The mode switch removes it once; if MediaMTX was briefly unavailable the
-        encoder's tracks (e.g. H264 + AAC) could otherwise be refused.
+        encoder's tracks (e.g. H264 + AAC) could otherwise be refused. Attempts
+        run concurrently so an unreachable MediaMTX costs one request timeout
+        per tick, not one per room.
         """
-        if room_id in self.path_config_cleared:
+        pending = [(room_id, path) for room_id, path in paths.items() if room_id not in self.path_config_cleared]
+        if not pending:
             return
-        if await self.clear_path_config(path):
-            self.path_config_cleared.add(room_id)
+        results = await asyncio.gather(*(self.clear_path_config(path) for _, path in pending))
+        for (room_id, _), cleared in zip(pending, results, strict=True):
+            if cleared:
+                self.path_config_cleared.add(room_id)
 
     async def evaluate_room(self, room: Room, snapshot: PathSnapshot | None) -> None:
         """Advance one room's state from its path snapshot (``None`` = MediaMTX unreachable)."""

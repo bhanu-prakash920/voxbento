@@ -630,3 +630,30 @@ async def test_kick_publisher_session_already_gone_is_success():
     client = httpx.AsyncClient(transport=httpx.MockTransport(gone))
     with patch.object(mediamtx, "get_http_client", return_value=client):
         assert await mediamtx.kick_publisher("ev/1/floor") is False
+
+
+@pytest.mark.anyio
+async def test_path_config_cleanup_runs_concurrently_across_rooms():
+    import asyncio
+
+    for i in range(5):
+        await make_room(f"ev-par-{i}")
+    in_flight = 0
+    peak = 0
+
+    async def slow_failing_clear(path: str) -> bool:
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+        return False
+
+    sup = make_supervisor({}, FakeWorkers(), Clock())
+    sup.clear_path_config = slow_failing_clear
+    await sup.tick()
+    assert peak == 5
+    assert sup.path_config_cleared == set()
+    # Still retried on the next tick, and rooms are evaluated regardless.
+    await sup.tick()
+    assert all(sup.status_for(rid) is not None for rid in range(1, 6))
